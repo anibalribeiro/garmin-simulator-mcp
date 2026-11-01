@@ -194,6 +194,32 @@ Add to `~/.gemini/config/mcp_config.json`:
 }
 ```
 
+### OpenCode (`~/.config/opencode/opencode.jsonc`)
+
+Add via the OpenCode CLI:
+
+```bash
+opencode mcp add --global garmin-emulator -- node /path/to/garmin-emulator-mcp/dist/index.js
+```
+
+Or manually configure under `mcp.servers` in `~/.config/opencode/opencode.jsonc`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "garmin-emulator": {
+        "type": "local",
+        "command": [
+          "node",
+          "/path/to/garmin-emulator-mcp/dist/index.js"
+        ]
+      }
+    }
+  }
+}
+```
+
 ---
 
 ## License

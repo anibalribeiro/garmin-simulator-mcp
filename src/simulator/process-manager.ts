@@ -490,46 +490,56 @@ export class SimulatorProcessManager {
         }
       };
 
+      const stopChild = () => {
+        if (this.activeProcess === child) this.activeProcess = null;
+        try { child.kill("SIGTERM"); } catch { /* already gone */ }
+      };
+
       const waitTimer = setTimeout(() => {
-        // Alive, no fatal output and past the push window: the app started. This is
-        // weaker than the (never printed) protocol marker, so say so explicitly.
-        const alive = this.activeProcess === child && !child.killed;
+        // Flush any trailing partial line before deciding.
+        handleLine("");
+        // Alive means the OS process has not exited; `killed` only tracks our own kill.
+        const alive = this.activeProcess === child && child.exitCode === null && child.signalCode === null;
+        if (fatal) { stopChild(); }
         this.appendLog("system", alive && !fatal
           ? `App startup inferred after ${waitMs}ms (process alive, no fatal output).`
           : `App failed to start within ${waitMs}ms.`);
         finish(alive && !fatal, false);
       }, waitMs);
 
+      // Chunks can split a line; buffer the remainder and flush on close/timeout.
+      let buffered = "";
+      const handleLine = (line: string) => {
+        const trimmed = line.trimEnd();
+        if (!trimmed || settled) return;
+        initialLogs.push(`[stdout] ${trimmed}`);
+        if (fatalRegex.test(trimmed)) {
+          fatal = trimmed;
+          this.appendLog("stderr", `Fatal launcher output: ${trimmed}`);
+          stopChild();
+          finish(false);
+        } else if (triggerRegex.test(trimmed)) {
+          this.appendLog("system", `Startup trigger detected: "${trimmed}"`);
+          finish(true, true);
+        }
+      };
+      const consume = (text: string) => {
+        buffered += text;
+        const parts = buffered.split(/\r?\n/);
+        buffered = parts.pop() ?? "";
+        for (const part of parts) handleLine(part);
+      };
+
       child.stdout?.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf-8");
         this.appendLog("stdout", text);
-        const lines = text.split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
-        for (const line of lines) {
-          if (!settled) {
-            initialLogs.push(`[stdout] ${line}`);
-            if (fatalRegex.test(line)) fatal = line;
-            else if (triggerRegex.test(line)) {
-              this.appendLog("system", `Startup trigger detected in stdout: "${line}"`);
-              finish(true, true);
-            }
-          }
-        }
+        consume(text);
       });
 
       child.stderr?.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf-8");
         this.appendLog("stderr", text);
-        const lines = text.split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
-        for (const line of lines) {
-          if (!settled) {
-            initialLogs.push(`[stderr] ${line}`);
-            if (fatalRegex.test(line)) fatal = line;
-            else if (triggerRegex.test(line)) {
-              this.appendLog("system", `Startup trigger detected in stderr: "${line}"`);
-              finish(true, true);
-            }
-          }
-        }
+        consume(text);
       });
 
       child.on("error", (err: Error) => {

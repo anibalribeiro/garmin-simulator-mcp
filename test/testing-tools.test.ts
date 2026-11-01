@@ -35,5 +35,11 @@ try {
   assert.equal(matches("DATA/MEDIA/OBJSTORE/OTHER/TEST.CMP"), false);
   assert.equal(matches("DATA/TEST2.DAT"), false);
   assert.deepEqual(validateAppNames(["B", "A"]), ["A", "B"]);
+  // Intermediate directory swapped for a symlink must be refused.
+  const symlinkSnapshot = path.join(temporary, "backup-symlink");
+  await snapshotAppFiles(symlinkSnapshot, ["TEST"], root);
+  await fs.rename(path.join(symlinkSnapshot, "files/DATA"), path.join(symlinkSnapshot, "files/DATA-real"));
+  await fs.symlink(path.join(symlinkSnapshot, "files/DATA-real"), path.join(symlinkSnapshot, "files/DATA"));
+  await assert.rejects(restoreAppFiles(symlinkSnapshot, ["TEST"], root), /symbolic link/);
   console.log("PASS snapshot/readback, restore, scoped cleanup, unrelated preservation, identity, checksum, overwrite and path safety");
 } finally { await fs.rm(temporary, { recursive: true, force: true }); }

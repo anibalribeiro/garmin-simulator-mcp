@@ -95,7 +95,12 @@ export async function restoreAppFiles(directory: string, appNames: string[], roo
     if (path.isAbsolute(relative) || relative.split(/[\\/]/).includes("..") ||
         !names.flatMap(appFilePatterns).some((pattern) => pattern.test(relative))) throw new Error("Invalid snapshot path.");
     const backupFile = path.join(source, "files", relative);
-    if ((await fs.lstat(backupFile)).isSymbolicLink()) throw new Error("Snapshot contains a symbolic link.");
+    // lstat every segment: an intermediate directory could itself be a symlink.
+    let current = path.join(source, "files");
+    for (const segment of relative.split("/")) {
+      current = path.join(current, segment);
+      if ((await fs.lstat(current)).isSymbolicLink()) throw new Error("Snapshot contains a symbolic link.");
+    }
     const data = await fs.readFile(backupFile);
     if (digest(data) !== info.sha256) throw new Error("Snapshot checksum mismatch.");
     backups.set(relative, data);

@@ -566,6 +566,11 @@ export async function main(): Promise<void> {
   process.once("exit", killChild);
   process.once("SIGINT", () => { killChild(); process.exit(0); });
   process.once("SIGTERM", () => { killChild(); process.exit(0); });
+  // A stdio client that just closes the pipe leaves no signal and no exit, so the
+  // server used to outlive its client with the monkeydo child still attached.
+  const shutdown = () => { killChild(); process.exit(0); };
+  process.stdin.once("end", shutdown);
+  process.stdin.once("close", shutdown);
 }
 
 // Run main if this is the entry script

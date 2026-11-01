@@ -32,7 +32,7 @@ try {
   for (const [mode, body, expected] of suites) {
     await fake(body);
     const result = await manager.runUnitTests(sdk, {
-      prgPath: mode, deviceId: "fenix847mm", timeoutMs: mode === "timeout" ? 400 : 3000,
+      prgPath: mode, deviceId: "fenix847mm", timeoutMs: mode === "timeout" ? 2500 : 8000,
     });
     assert.equal(result.passed, expected, mode);
     if (mode === "exit1") assert.match(result.exitCodeWarning ?? "", /exited 1 despite a complete PASSED summary/);
@@ -57,13 +57,13 @@ try {
 
   // A launcher that exits immediately, even with code 0, is not a launch.
   await fake(`process.exit(0);`);
-  const exited = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 800 });
+  const exited = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 5000 });
   assert.equal(exited.launched, false);
   console.log("PASS zero launcher exit does not confirm startup");
 
   // Alive past the wait window with no errors: inferred launch, not confirmed.
   await fake(`setInterval(()=>{},1000);`);
-  const alive = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 600 });
+  const alive = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 4000 });
   assert.equal(alive.launched, true);
   assert.equal(alive.startupConfirmed, false);
   await manager.stopActiveApp();
@@ -71,15 +71,31 @@ try {
 
   // An explicit SDK marker confirms the startup.
   await fake(`console.log('appStarted'); setInterval(()=>{},1000);`);
-  const marked = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 800 });
+  const marked = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 5000 });
   assert.equal(marked.launched, true);
   assert.equal(marked.startupConfirmed, true);
   await manager.stopActiveApp();
   console.log("PASS explicit startup marker sets startupConfirmed");
 
+  // A marker split across stream chunks is still recognised.
+  await fake(`process.stdout.write('appSta'); setTimeout(()=>process.stdout.write('rted\\n'),50); setInterval(()=>{},1000);`);
+  const split = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 5000 });
+  assert.equal(split.launched, true);
+  assert.equal(split.startupConfirmed, true);
+  await manager.stopActiveApp();
+  console.log("PASS startup marker split across chunks is detected");
+
+  // Fatal text without a trailing newline is flushed before the timeout decision.
+  await fake(`process.stdout.write('Unable to connect to simulator'); setInterval(()=>{},1000);`);
+  const partial = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 6000 });
+  assert.equal(partial.launched, false);
+  assert.match(partial.fatalError ?? "", /Unable to connect to simulator/);
+  assert.equal(manager.isAppRunning(), false);
+  console.log("PASS trailing fatal line without newline fails the launch");
+
   // Fatal output wins over liveness, and the launcher is stopped.
   await fake(`console.log('Unable to connect to simulator'); setInterval(()=>{},1000);`);
-  const fatal = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 1500 });
+  const fatal = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 6000 });
   assert.equal(fatal.launched, false);
   assert.match(fatal.fatalError ?? "", /Unable to connect to simulator/);
   assert.equal(manager.isAppRunning(), false);

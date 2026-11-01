@@ -496,8 +496,9 @@ export class SimulatorProcessManager {
       };
 
       const waitTimer = setTimeout(() => {
-        // Flush any trailing partial line before deciding.
-        handleLine("");
+        // Flush any trailing partial lines before deciding.
+        flushStdout();
+        flushStderr();
         // Alive means the OS process has not exited; `killed` only tracks our own kill.
         const alive = this.activeProcess === child && child.exitCode === null && child.signalCode === null;
         if (fatal) { stopChild(); }
@@ -507,12 +508,13 @@ export class SimulatorProcessManager {
         finish(alive && !fatal, false);
       }, waitMs);
 
-      // Chunks can split a line; buffer the remainder and flush on close/timeout.
-      let buffered = "";
-      const handleLine = (line: string) => {
+      // Chunks can split a line. Keep one buffer per stream and flush on close/timeout.
+      let bufferedStdout = "";
+      let bufferedStderr = "";
+      const handleLine = (source: "stdout" | "stderr", line: string) => {
         const trimmed = line.trimEnd();
         if (!trimmed || settled) return;
-        initialLogs.push(`[stdout] ${trimmed}`);
+        initialLogs.push(`[${source}] ${trimmed}`);
         if (fatalRegex.test(trimmed)) {
           fatal = trimmed;
           this.appendLog("stderr", `Fatal launcher output: ${trimmed}`);
@@ -523,23 +525,26 @@ export class SimulatorProcessManager {
           finish(true, true);
         }
       };
-      const consume = (text: string) => {
-        buffered += text;
-        const parts = buffered.split(/\r?\n/);
-        buffered = parts.pop() ?? "";
-        for (const part of parts) handleLine(part);
+      const consume = (text: string, which: "out" | "err") => {
+        let buffer = which === "out" ? bufferedStdout + text : bufferedStderr + text;
+        const parts = buffer.split(/\r?\n/);
+        buffer = parts.pop() ?? "";
+        if (which === "out") bufferedStdout = buffer; else bufferedStderr = buffer;
+        for (const part of parts) handleLine(which === "out" ? "stdout" : "stderr", part);
       };
+      const flushStdout = () => { const line = bufferedStdout; bufferedStdout = ""; handleLine("stdout", line); };
+      const flushStderr = () => { const line = bufferedStderr; bufferedStderr = ""; handleLine("stderr", line); };
 
       child.stdout?.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf-8");
         this.appendLog("stdout", text);
-        consume(text);
+        consume(text, "out");
       });
 
       child.stderr?.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf-8");
         this.appendLog("stderr", text);
-        consume(text);
+        consume(text, "err");
       });
 
       child.on("error", (err: Error) => {

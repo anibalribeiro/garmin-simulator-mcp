@@ -468,6 +468,10 @@ export async function handleRunUnitTests(args: {
               exitCode: result.exitCode,
               deviceId,
               output: result.output,
+              summary: result.summary,
+              signal: result.signal,
+              timedOut: result.timedOut ?? false,
+              exitCodeWarning: result.exitCodeWarning,
             },
             null,
             2

@@ -2,6 +2,7 @@ import Cocoa
 import CoreGraphics
 import ApplicationServices
 import Foundation
+import Vision
 
 // Helper to output JSON to stdout
 func printJSON(_ object: Any) {
@@ -60,31 +61,33 @@ func findSimulatorWindow(pid: pid_t?) -> [String: Any]? {
     guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
         return nil
     }
-    
+
+    var fallback: [String: Any]? = nil
     for w in windowList {
         let layer = w[kCGWindowLayer as String] as? Int ?? -1
         guard layer == 0 else { continue }
-        
+
         let ownerPid = w[kCGWindowOwnerPID as String] as? pid_t
         let ownerName = w[kCGWindowOwnerName as String] as? String ?? ""
-        
+
         let pidMatches: Bool
         if let targetPid = pid {
             pidMatches = (ownerPid == targetPid)
         } else {
             pidMatches = (ownerName == "Connect IQ Device Simulator")
         }
-        
+
         guard pidMatches else { continue }
-        
+
         if let boundsDict = w[kCGWindowBounds as String] as? [String: Any],
            let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) {
-            if bounds.width > 100 && bounds.height > 100 {
-                return w
-            }
+            guard bounds.width > 100 && bounds.height > 100 else { continue }
+            let name = w[kCGWindowName as String] as? String ?? ""
+            if name.hasPrefix("CIQ Simulator") { return w }
+            if fallback == nil { fallback = w }
         }
     }
-    return nil
+    return fallback
 }
 
 func handleWindowInfo() {
@@ -443,7 +446,114 @@ func handleMenu(args: [String]) {
     }
 }
 
+func findWindow(_ appRef: AXUIElement, title: String) -> AXUIElement? {
+    var windowsValue: AnyObject?
+    guard AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsValue) == .success,
+          let windows = windowsValue as? [AXUIElement] else { return nil }
+    for window in windows where getAXTitle(element: window) == title { return window }
+    return nil
+}
+
+func findButton(_ element: AXUIElement, title: String, depth: Int = 0) -> AXUIElement? {
+    if depth > 10 { return nil }
+    if getAXTitle(element: element) == title && (axAttribute(element, kAXRoleAttribute as String) as? String ?? "") == "AXButton" { return element }
+    for child in getAXChildren(element: element) { if let found = findButton(child, title: title, depth: depth + 1) { return found } }
+    return nil
+}
+
+func handleStorageClose() {
+    guard let app = findSimulatorApp(), AXIsProcessTrusted() else { printJSON(["ok": false, "error": "Simulator or Accessibility unavailable"]); return }
+    let appRef = AXUIElementCreateApplication(app.processIdentifier)
+    guard let window = findWindow(appRef, title: "Modify Object Store") else { printJSON(["ok": true, "alreadyClosed": true]); return }
+    guard let cancel = findButton(window, title: "Cancel") else { printJSON(["ok": false, "error": "Cancel button not found"]); return }
+    let error = AXUIElementPerformAction(cancel, kAXPressAction as CFString)
+    for _ in 0..<20 {
+        usleep(100_000)
+        if findWindow(appRef, title: "Modify Object Store") == nil { printJSON(["ok": true, "closed": true, "AXError": error.rawValue]); return }
+    }
+    printJSON(["ok": false, "error": "Storage editor remained open"])
+}
+
+func handleRaise() {
+    guard let app = findSimulatorApp(), AXIsProcessTrusted() else { printJSON(["ok": false, "error": "Simulator or Accessibility unavailable"]); return }
+    _ = activateApp(app)
+    let appRef = AXUIElementCreateApplication(app.processIdentifier)
+    guard let window = findWindow(appRef, title: "CIQ Simulator") ?? {
+        var value: AnyObject?
+        guard AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement] else { return nil }
+        return windows.first
+    }() else { printJSON(["ok": false, "error": "Window not found"]); return }
+    let raised = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    let focused = AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    printJSON(["ok": raised == .success, "raise": raised.rawValue, "focus": focused.rawValue])
+}
+
 // Main dispatcher
+func axAttribute(_ element: AXUIElement, _ name: String) -> AnyObject? {
+    var value: AnyObject?
+    if AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success { return value }
+    return nil
+}
+
+func handleUITree(args: [String]) {
+    guard let app = findSimulatorApp(), AXIsProcessTrusted() else {
+        printJSON(["ok": false, "error": "Simulator or Accessibility permission unavailable"]); return
+    }
+    let maxDepth = min(14, max(1, Int(args.first ?? "7") ?? 7))
+    var count = 0
+    func visit(_ element: AXUIElement, _ route: [Int], _ depth: Int) -> [String: Any] {
+        count += 1
+        var node: [String: Any] = ["path": route]
+        for key in ["AXRole", "AXTitle", "AXDescription", "AXIdentifier", "AXValue", "AXEnabled"] {
+            if let value = axAttribute(element, key) {
+                if let text = value as? String { node[key] = text }
+                else if let number = value as? NSNumber { node[key] = number }
+            }
+        }
+        var actions: CFArray?
+        if AXUIElementCopyActionNames(element, &actions) == .success, let names = actions { node["actions"] = names }
+        let children = getAXChildren(element: element)
+        node["childCount"] = children.count
+        if depth < maxDepth && count < 5000 {
+            node["children"] = children.enumerated().map { visit($0.element, route + [$0.offset], depth + 1) }
+        } else if !children.isEmpty { node["truncated"] = true }
+        return node
+    }
+    let appElement = AXUIElementCreateApplication(app.processIdentifier)
+    var childValue: AnyObject?
+    let childError = AXUIElementCopyAttributeValue(appElement, kAXChildrenAttribute as CFString, &childValue)
+    let windows = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []).filter { ($0[kCGWindowOwnerPID as String] as? pid_t) == app.processIdentifier }
+    printJSON(["ok": childError == .success, "AXError": childError.rawValue, "pid": app.processIdentifier, "windows": windows, "tree": visit(appElement, [], 0)])
+}
+
+func handleUIAction(args: [String]) {
+    guard args.count >= 2, let app = findSimulatorApp(), AXIsProcessTrusted() else {
+        printJSON(["ok": false, "error": "Missing path/action or simulator access"]); return
+    }
+    let parts = args[0].split(separator: ".").compactMap { Int($0) }
+    guard !parts.isEmpty, parts.count == args[0].split(separator: ".").count else {
+        printJSON(["ok": false, "error": "Invalid element path"]); return
+    }
+    var element = AXUIElementCreateApplication(app.processIdentifier)
+    for part in parts {
+        let children = getAXChildren(element: element)
+        guard part >= 0 && part < children.count else { printJSON(["ok": false, "error": "Stale element path"]); return }
+        element = children[part]
+    }
+    let result: AXError
+    if args[1] == "select" {
+        result = AXUIElementSetAttributeValue(element, kAXSelectedAttribute as CFString, kCFBooleanTrue)
+    } else if args[1] == "focus" {
+        result = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    } else if args[1] == "set" && args.count == 3 {
+        result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, args[2] as CFString)
+    } else if ["AXPress", "AXConfirm", "AXIncrement", "AXDecrement"].contains(args[1]) {
+        result = AXUIElementPerformAction(element, args[1] as CFString)
+    } else { printJSON(["ok": false, "error": "Unsupported action"]); return }
+    printJSON(["ok": result == .success, "AXError": result.rawValue])
+}
+
 func main() {
     let args = Array(CommandLine.arguments.dropFirst())
     guard let cmd = args.first else {
@@ -465,6 +575,34 @@ func main() {
         handleKey(args: subArgs)
     case "menu":
         handleMenu(args: subArgs)
+    case "ui-tree":
+        handleUITree(args: subArgs)
+    case "ui-action":
+        handleUIAction(args: subArgs)
+    case "storage-close":
+        handleStorageClose()
+    case "raise":
+        handleRaise()
+    case "terminate":
+        if let app = findSimulatorApp() {
+            printJSON(["ok": subArgs.contains("--force") ? app.forceTerminate() : app.terminate(), "pid": app.processIdentifier])
+        } else { printJSON(["ok": true, "alreadyStopped": true]) }
+    case "ocr":
+        guard let file = subArgs.first else { printJSON(["ok": false, "error": "Missing image path"]); return }
+        do {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["en-US"]
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
+            let lines = (request.results ?? []).compactMap { observation -> [String: Any]? in
+                guard let candidate = observation.topCandidates(1).first else { return nil }
+                let b = observation.boundingBox
+                return ["text": candidate.string, "confidence": candidate.confidence,
+                        "bounds": ["x": b.origin.x, "y": b.origin.y, "width": b.width, "height": b.height]]
+            }
+            printJSON(["ok": true, "lines": lines])
+        } catch { printJSON(["ok": false, "error": String(describing: error)]) }
     default:
         printJSON(["error": "Unknown command: \(cmd)"])
         exit(1)

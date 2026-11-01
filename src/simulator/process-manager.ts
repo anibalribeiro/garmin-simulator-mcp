@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { spawn, execFile, ChildProcess } from "node:child_process";
 import type { GarminSdkPaths } from "../types.js";
+import { parseUnitTestOutput, type UnitTestSummary } from "./unit-results.js";
 
 export interface BuildProjectOptions {
   projectDir: string;
@@ -45,6 +46,10 @@ export interface RunUnitTestsResult {
   passed: boolean;
   exitCode: number;
   output: string;
+  summary: UnitTestSummary;
+  signal?: NodeJS.Signals | null;
+  timedOut?: boolean;
+  exitCodeWarning?: string;
 }
 
 export interface GetLogsOptions {
@@ -386,7 +391,7 @@ export class SimulatorProcessManager {
       });
 
       child.on("close", (code: number | null) => {
-        const exitCode = code ?? 0;
+        const exitCode = code ?? -1;
         const stdoutStr = Buffer.concat(stdoutChunks).toString("utf-8");
         const stderrStr = Buffer.concat(stderrChunks).toString("utf-8");
         const success = exitCode === 0;
@@ -477,8 +482,8 @@ export class SimulatorProcessManager {
       };
 
       const waitTimer = setTimeout(() => {
-        this.appendLog("system", `App startup wait period (${waitMs}ms) completed.`);
-        finish(true);
+        this.appendLog("system", `App startup unconfirmed after ${waitMs}ms; no startup marker received.`);
+        finish(false);
       }, waitMs);
 
       child.stdout?.on("data", (chunk: Buffer) => {
@@ -527,7 +532,7 @@ export class SimulatorProcessManager {
         }
         this.appendLog("system", `monkeydo process exited with code ${code}`);
         if (!settled) {
-          finish(code === 0);
+          finish(false); // A launcher exit, even zero, is not proof of app startup.
         }
       });
     });
@@ -591,6 +596,9 @@ export class SimulatorProcessManager {
     options: RunUnitTestsOptions
   ): Promise<RunUnitTestsResult> {
     const timeoutMs = options.timeoutMs ?? 30000;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error("timeoutMs must be a positive finite number.");
+    }
     const args = this.buildMonkeyDoArgs(options.prgPath, options.deviceId, {
       test: true,
       testName: options.testName,
@@ -622,11 +630,14 @@ export class SimulatorProcessManager {
         } catch {
           // Ignore
         }
-        const currentOutput = Buffer.concat(stdoutChunks).toString("utf-8");
+        const currentOutput = [Buffer.concat(stdoutChunks), Buffer.concat(stderrChunks)]
+          .map((buffer) => buffer.toString("utf-8")).filter(Boolean).join("\n");
         finish({
           passed: false,
           exitCode: -1,
           output: currentOutput + `\n[TEST TIMEOUT: Exceeded ${timeoutMs}ms]`,
+          summary: parseUnitTestOutput(currentOutput),
+          timedOut: true,
         });
       }, timeoutMs);
 
@@ -647,18 +658,24 @@ export class SimulatorProcessManager {
           passed: false,
           exitCode: 1,
           output: errorMsg,
+          summary: parseUnitTestOutput(errorMsg),
         });
       });
 
-      child.on("close", (code: number | null) => {
-        const exitCode = code ?? 0;
+      child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+        const exitCode = code ?? -1;
         const stdoutStr = Buffer.concat(stdoutChunks).toString("utf-8");
         const stderrStr = Buffer.concat(stderrChunks).toString("utf-8");
         const combinedOutput = [stdoutStr, stderrStr].filter(Boolean).join("\n");
 
-        const hasPassedKeyword = /\bPASSED\b|\bPASS\b/i.test(combinedOutput);
-        const hasFailedKeyword = /\bFAILED\b|\bFAILURE\b|\bASSERTION FAILED\b/i.test(combinedOutput);
-        const passed = exitCode === 0 && (hasPassedKeyword || !hasFailedKeyword);
+        const summary = parseUnitTestOutput(combinedOutput);
+        const passed = !signal && summary.complete &&
+          summary.executed > 0 && summary.failed === 0 && summary.errors === 0;
+        // The SDK's monkeydo wrapper can return 1 even with a complete PASSED summary
+        // (reproduced outside this server). Keep the code visible, but do not let that
+        // wrapper quirk contradict the terminal test summary.
+        const exitCodeWarning = passed && exitCode !== 0
+          ? `SDK runner exited ${exitCode} despite a complete PASSED summary.` : undefined;
 
         this.appendLog(
           "system",
@@ -669,6 +686,9 @@ export class SimulatorProcessManager {
           passed,
           exitCode,
           output: combinedOutput,
+          summary,
+          signal,
+          exitCodeWarning,
         });
       });
     });

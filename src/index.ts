@@ -3,6 +3,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { testingResult, inspectUI, actOnUI, snapshotAppFiles, restoreAppFiles } from "./tools/testing.js";
+import { runBridgeCommand } from "./simulator/bridge.js";
 import {
   handleBuildApp,
   handleLaunchSimulator,
@@ -523,6 +525,27 @@ export function createServer(): McpServer {
     async (args) => handleSetGlanceMode(args)
   );
 
+  server.tool("inspect_ui", "Read simulator Accessibility hierarchy, including menus and native dialogs. Paths are ephemeral: inspect before acting.",
+    { depth: z.number().int().min(1).max(14).default(7) },
+    async ({ depth }) => testingResult(() => inspectUI(depth)));
+  server.tool("act_on_ui", "Act on a freshly inspected native simulator element. set writes AXValue; AXPress activates controls.",
+    { path: z.array(z.number().int().nonnegative()).min(1), action: z.enum(["set", "select", "focus", "AXPress", "AXConfirm", "AXIncrement", "AXDecrement"]), value: z.string().optional() },
+    async (args) => testingResult(() => actOnUI(args.path, args.action, args.value)));
+  server.tool("snapshot_app_files", "Back up only files matching explicit PRG basenames from simulator APPS. Does not stop the app; use an idle/stopped session.",
+    { directory: z.string(), app_names: z.array(z.string()) },
+    async (args) => testingResult(() => snapshotAppFiles(args.directory, args.app_names)));
+  server.tool("restore_app_files", "Restore a verified app-scoped snapshot. Requires explicit confirmation and a stopped app; never use while app/background writes are active.",
+    { directory: z.string(), app_names: z.array(z.string()), confirm_stopped: z.literal(true) },
+    async (args) => testingResult(() => restoreAppFiles(args.directory, args.app_names)));
+  server.tool("terminate_simulator", "Terminate only ConnectIQ.app; force is for an unresponsive simulator. Does not delete stored data. Relaunch separately after confirming stopped status.",
+    { force: z.boolean().default(false) },
+    async ({ force }) => testingResult(() => runBridgeCommand(["terminate", ...(force ? ["--force"] : [])])));
+  server.tool("recognize_image_text", "Recognize text in a saved simulator PNG with on-device macOS Vision. Returns text/confidence/normalized bounds; OCR is evidence, not a replacement for storage assertions.",
+    { image_path: z.string() },
+    async ({ image_path }) => testingResult(() => runBridgeCommand(["ocr", image_path])));
+  server.tool("close_storage_editor", "Close the simulator's persistent-storage editor and verify the window is gone. Safe when already closed.",
+    {},
+    async () => testingResult(() => runBridgeCommand(["storage-close"])));
   return server;
 }
 

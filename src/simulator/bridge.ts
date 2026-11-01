@@ -102,7 +102,17 @@ export async function getWindowInfo(): Promise<WindowInfoResponse> {
 export async function activateSimulator(): Promise<void> {
   const res = await runBridgeCommand(["activate"]);
   if (res && res.ok === false) {
-    throw new Error(res.error ?? "Failed to activate simulator");
+    // Activation can be refused when another app owns a modal; raising the window
+    // directly still makes it the click target.
+    await raiseSimulatorWindow();
+  }
+}
+
+/** Raises and focuses the simulator window (independent of app activation). */
+export async function raiseSimulatorWindow(): Promise<void> {
+  const res = await runBridgeCommand(["raise"]);
+  if (res && res.ok === false && res.error) {
+    throw new Error(res.error);
   }
 }
 

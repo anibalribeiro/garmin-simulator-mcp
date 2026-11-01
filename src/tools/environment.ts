@@ -93,10 +93,13 @@ export async function handleSetGlanceMode(args?: {
       }
     }
 
-    const res = await triggerMenu(["Settings", "Glance View"]);
+    const target = args?.enabled === false
+      ? ["Settings", "Glance Launch Mode", "Launch in Normal Mode"]
+      : ["Settings", "Glance Launch Mode", "Launch in Glance Mode"];
+    const res = await triggerMenu(target);
     if (!res.ok) {
       throw new Error(
-        res.error ?? "Failed to toggle 'Settings > Glance View' in Connect IQ simulator."
+        res.error ?? `Failed to trigger '${target.join(" > ")}' in Connect IQ simulator.`
       );
     }
 

@@ -6,6 +6,7 @@ import {
   clickScreenPoint,
   dragScreenPoints,
   getWindowInfo,
+  raiseSimulatorWindow,
   sendKeyCode,
 } from "../simulator/bridge.js";
 import {
@@ -122,6 +123,10 @@ async function performButtonPress(options: {
       "Connect IQ simulator window is not running or not visible. Launch it first using launch_simulator."
     );
   }
+
+  // Make the watch window the click target; app activation alone can be refused
+  // while another application owns focus or a modal.
+  await raiseSimulatorWindow();
 
   const screenPt = bezelPointToScreenPoint(
     keyMapping.center,
@@ -310,6 +315,7 @@ export async function handleTapScreen(args: {
         "Connect IQ simulator window is not running or not visible. Launch it first using launch_simulator."
       );
     }
+    await raiseSimulatorWindow();
 
     const screenPt = watchPointToScreenPoint(
       { x: watchX, y: watchY },
@@ -382,6 +388,7 @@ export async function handleSwipeScreen(args: {
         "Connect IQ simulator window is not running or not visible. Launch it first using launch_simulator."
       );
     }
+    await raiseSimulatorWindow();
 
     const startScreen = watchPointToScreenPoint(
       startWatch,
@@ -469,6 +476,7 @@ export async function handleHoldScreen(args: {
         "Connect IQ simulator window is not running or not visible. Launch it first using launch_simulator."
       );
     }
+    await raiseSimulatorWindow();
 
     const screenPt = watchPointToScreenPoint(
       { x: watchX, y: watchY },

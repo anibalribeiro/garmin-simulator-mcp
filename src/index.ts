@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { testingResult, inspectUI, actOnUI, snapshotAppFiles, restoreAppFiles } from "./tools/testing.js";
 import { runBridgeCommand } from "./simulator/bridge.js";
+import { processManager } from "./simulator/process-manager.js";
 import {
   handleBuildApp,
   handleLaunchSimulator,
@@ -556,6 +557,15 @@ export async function main(): Promise<void> {
   const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  // Do not leave a simulator launcher behind when this server exits; stale
+  // monkeydo/shell processes accumulate and fight over port 1234.
+  const killChild = () => {
+    const child = processManager.getActiveProcess();
+    if (child) { try { child.kill("SIGKILL"); } catch { /* gone */ } }
+  };
+  process.once("exit", killChild);
+  process.once("SIGINT", () => { killChild(); process.exit(0); });
+  process.once("SIGTERM", () => { killChild(); process.exit(0); });
 }
 
 // Run main if this is the entry script

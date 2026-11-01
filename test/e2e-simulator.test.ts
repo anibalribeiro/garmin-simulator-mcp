@@ -29,6 +29,13 @@ const EXPECTED_TOOLS = [
   "get_app_logs",
   "trigger_menu_action",
   "set_glance_mode",
+  "inspect_ui",
+  "act_on_ui",
+  "snapshot_app_files",
+  "restore_app_files",
+  "terminate_simulator",
+  "recognize_image_text",
+  "close_storage_editor",
 ];
 
 async function runE2E() {
@@ -43,9 +50,9 @@ async function runE2E() {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverScript],
-    env: {
-      ...process.env,
-    },
+    env: Object.fromEntries(
+      Object.entries(process.env).filter(([, value]) => value !== undefined)
+    ) as Record<string, string>,
   });
 
   const client = new Client(

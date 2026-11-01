@@ -36,8 +36,12 @@ export function parseUnitTestOutput(output: string): UnitTestSummary {
   }
   result.executed = Number(runs[0].match(/\d+/)![0]);
   for (const line of section.slice(0, section.indexOf(runs[0]))) {
+    if (!line || /^Test:\s*Status:?$/i.test(line) || /^=+$/.test(line)) continue;
     const entry = line.match(/^(\S+)\s+(PASS|FAIL|FAILED|ERROR)$/i);
-    if (!entry) continue;
+    if (!entry) {
+      result.issues.push(`Unrecognized result row: ${line}`);
+      continue;
+    }
     const status = entry[2].toUpperCase();
     result.tests.push({ name: entry[1], status: status === "FAILED" ? "FAIL" : status as UnitTestCaseResult["status"] });
   }
@@ -72,7 +76,7 @@ export function parseUnitTestOutput(output: string): UnitTestSummary {
   const terminalPassed = terminal[1].toUpperCase() === "PASSED";
   if (terminalPassed !== (result.failed === 0 && result.errors === 0)) result.issues.push("Terminal verdict conflicts with results.");
   // A complete table must not conceal an earlier crash or assertion failure.
-  if (terminalPassed && lines.some((s) => /^(?:ASSERTION FAILED|Unhandled Exception|Error:.*)$/i.test(s))) {
+  if (terminalPassed && lines.some((s) => /^(?:ASSERTION FAILED|Unhandled Exception|Encountered an app crash\.|Unable to communicate with (?:the )?simulator\.|FAIL$|ERROR\b|Error:.*)$/i.test(s))) {
     result.issues.push("Error output conflicts with successful summary.");
   }
   result.complete = result.issues.length === 0;

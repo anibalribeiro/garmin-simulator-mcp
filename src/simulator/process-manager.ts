@@ -31,8 +31,11 @@ export interface RunAppOptions {
 
 export interface RunAppResult {
   launched: boolean;
+  /** True only when the SDK printed an explicit deviceStarted/appStarted marker. */
+  startupConfirmed?: boolean;
   activeDeviceId: string;
   initialLogs: string[];
+  fatalError?: string;
 }
 
 export interface RunUnitTestsOptions {
@@ -462,12 +465,16 @@ export class SimulatorProcessManager {
     return new Promise<RunAppResult>((resolve) => {
       let settled = false;
       const initialLogs: string[] = [];
+      // monkeydo consumes its deviceStarted/appStarted protocol messages internally and
+      // normally prints nothing, so a marker alone cannot decide success.
       const triggerRegex = /deviceStarted|appStarted/i;
+      const fatalRegex = /Unable to connect to simulator|Unable to launch|not properly signed|Encountered an app crash|Unable to find given PRG|Invalid PRG file|MonkeyDoDeuxException|Unhandled Exception/i;
+      let fatal: string | undefined;
 
       const child = spawn(sdkPaths.monkeydoPath, args);
       this.activeProcess = child;
 
-      const finish = (launched: boolean) => {
+      const finish = (launched: boolean, startupConfirmed = false) => {
         if (!settled) {
           settled = true;
           if (waitTimer) {
@@ -475,15 +482,22 @@ export class SimulatorProcessManager {
           }
           resolve({
             launched,
+            startupConfirmed,
             activeDeviceId: options.deviceId,
             initialLogs: [...initialLogs],
+            fatalError: fatal,
           });
         }
       };
 
       const waitTimer = setTimeout(() => {
-        this.appendLog("system", `App startup unconfirmed after ${waitMs}ms; no startup marker received.`);
-        finish(false);
+        // Alive, no fatal output and past the push window: the app started. This is
+        // weaker than the (never printed) protocol marker, so say so explicitly.
+        const alive = this.activeProcess === child && !child.killed;
+        this.appendLog("system", alive && !fatal
+          ? `App startup inferred after ${waitMs}ms (process alive, no fatal output).`
+          : `App failed to start within ${waitMs}ms.`);
+        finish(alive && !fatal, false);
       }, waitMs);
 
       child.stdout?.on("data", (chunk: Buffer) => {
@@ -493,9 +507,10 @@ export class SimulatorProcessManager {
         for (const line of lines) {
           if (!settled) {
             initialLogs.push(`[stdout] ${line}`);
-            if (triggerRegex.test(line)) {
+            if (fatalRegex.test(line)) fatal = line;
+            else if (triggerRegex.test(line)) {
               this.appendLog("system", `Startup trigger detected in stdout: "${line}"`);
-              finish(true);
+              finish(true, true);
             }
           }
         }
@@ -508,9 +523,10 @@ export class SimulatorProcessManager {
         for (const line of lines) {
           if (!settled) {
             initialLogs.push(`[stderr] ${line}`);
-            if (triggerRegex.test(line)) {
+            if (fatalRegex.test(line)) fatal = line;
+            else if (triggerRegex.test(line)) {
               this.appendLog("system", `Startup trigger detected in stderr: "${line}"`);
-              finish(true);
+              finish(true, true);
             }
           }
         }
@@ -669,11 +685,12 @@ export class SimulatorProcessManager {
         const combinedOutput = [stdoutStr, stderrStr].filter(Boolean).join("\n");
 
         const summary = parseUnitTestOutput(combinedOutput);
-        const passed = !signal && summary.complete &&
+        const fatalRunnerOutput = /Encountered an app crash|Unable to communicate with the simulator|Unable to launch|MonkeyDoDeuxException/i.test(combinedOutput);
+        // SDK 9.3.0's monkeydo wrapper exits 1 even on a complete PASSED summary.
+        // Accept only that specific quirk; any other status or fatal output fails.
+        const exitAcceptable = exitCode === 0 || exitCode === 1;
+        const passed = !signal && exitAcceptable && !fatalRunnerOutput && summary.complete &&
           summary.executed > 0 && summary.failed === 0 && summary.errors === 0;
-        // The SDK's monkeydo wrapper can return 1 even with a complete PASSED summary
-        // (reproduced outside this server). Keep the code visible, but do not let that
-        // wrapper quirk contradict the terminal test summary.
         const exitCodeWarning = passed && exitCode !== 0
           ? `SDK runner exited ${exitCode} despite a complete PASSED summary.` : undefined;
 

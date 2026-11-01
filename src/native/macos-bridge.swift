@@ -450,7 +450,10 @@ func findWindow(_ appRef: AXUIElement, title: String) -> AXUIElement? {
     var windowsValue: AnyObject?
     guard AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsValue) == .success,
           let windows = windowsValue as? [AXUIElement] else { return nil }
-    for window in windows where getAXTitle(element: window) == title { return window }
+    for window in windows {
+        guard let name = getAXTitle(element: window) else { continue }
+        if name == title || name.hasPrefix(title) { return window }
+    }
     return nil
 }
 
@@ -486,7 +489,12 @@ func handleRaise() {
     }() else { printJSON(["ok": false, "error": "Window not found"]); return }
     let raised = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
     let focused = AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-    printJSON(["ok": raised == .success, "raise": raised.rawValue, "focus": focused.rawValue])
+    if raised == .success {
+        printJSON(["ok": true, "raise": raised.rawValue, "focus": focused.rawValue])
+    } else {
+        printJSON(["ok": false, "error": "AXRaise failed (AXError: \(raised.rawValue))",
+                   "raise": raised.rawValue, "focus": focused.rawValue])
+    }
 }
 
 // Main dispatcher
@@ -515,8 +523,13 @@ func handleUITree(args: [String]) {
         if AXUIElementCopyActionNames(element, &actions) == .success, let names = actions { node["actions"] = names }
         let children = getAXChildren(element: element)
         node["childCount"] = children.count
-        if depth < maxDepth && count < 5000 {
-            node["children"] = children.enumerated().map { visit($0.element, route + [$0.offset], depth + 1) }
+        if depth < maxDepth {
+            var mapped: [[String: Any]] = []
+            for (offset, child) in children.enumerated() {
+                if count >= 5000 { node["truncated"] = true; break }
+                mapped.append(visit(child, route + [offset], depth + 1))
+            }
+            node["children"] = mapped
         } else if !children.isEmpty { node["truncated"] = true }
         return node
     }
@@ -585,7 +598,11 @@ func main() {
         handleRaise()
     case "terminate":
         if let app = findSimulatorApp() {
-            printJSON(["ok": subArgs.contains("--force") ? app.forceTerminate() : app.terminate(), "pid": app.processIdentifier])
+            let sent = subArgs.contains("--force") ? app.forceTerminate() : app.terminate()
+            var waited = 0
+            while !app.isTerminated && waited < 2000 { usleep(100_000); waited += 100 }
+            printJSON(["ok": sent && app.isTerminated, "pid": app.processIdentifier,
+                       "terminated": app.isTerminated, "waitedMs": waited])
         } else { printJSON(["ok": true, "alreadyStopped": true]) }
     case "ocr":
         guard let file = subArgs.first else { printJSON(["ok": false, "error": "Missing image path"]); return }

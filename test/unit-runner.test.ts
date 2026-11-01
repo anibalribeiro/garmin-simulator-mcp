@@ -16,6 +16,7 @@ try {
     `else if(mode==='empty') {}\n` +
     `else if(mode==='partial') {console.log('PASS');}\n` +
     `else if(mode==='failed') {console.log('RESULTS\\nfirst PASS\\nsecond ERROR\\nRan 2 tests\\nFAILED (passed=1, failed=0, errors=1)');}\n` +
+    `else if(mode==='alive') {setInterval(()=>{},1000);}\n` +
     `else {process.stdout.write(${JSON.stringify(good)}); if(mode==='exit1') process.exitCode=1;}\n`);
   await fs.chmod(executable, 0o700);
   const sdk = { monkeydoPath: executable } as GarminSdkPaths;
@@ -45,6 +46,14 @@ try {
   const startup = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 1000 });
   assert.equal(startup.launched, false);
   console.log("PASS zero launcher exit does not confirm startup");
+  // An alive launcher past the wait window, with no fatal output, is a launch (unconfirmed).
+  await fs.writeFile(executable, `#!${process.execPath}\nsetInterval(()=>{},1000);\n`);
+  await fs.chmod(executable, 0o700);
+  const alive = await manager.runAppInSimulator(sdk, { prgPath: prg, deviceId: "fenix847mm", waitMs: 600 });
+  assert.equal(alive.launched, true);
+  assert.equal(alive.startupConfirmed, false);
+  await manager.stopActiveApp();
+  console.log("PASS alive launcher past the wait window counts as an inferred launch");
 } finally {
   await fs.rm(root, { recursive: true, force: true });
 }

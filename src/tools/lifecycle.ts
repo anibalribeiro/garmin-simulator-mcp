@@ -361,6 +361,8 @@ export async function handleRunApp(args: {
         text: JSON.stringify(
           {
             launched: result.launched,
+            startupConfirmed: result.startupConfirmed ?? false,
+            fatalError: result.fatalError,
             deviceId: result.activeDeviceId,
             initialLogs: result.initialLogs,
           },

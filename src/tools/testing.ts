@@ -24,13 +24,30 @@ const storageRoot = () => path.join(process.platform === "darwin"
   ? execFileSync("getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8" }).trim() : os.tmpdir(),
   "com.garmin.connectiq/GARMIN/APPS");
 const digest = (data: Buffer) => createHash("sha256").update(data).digest("hex");
+const RESERVED = new Set(["DATA", "SETTINGS", "MEDIA", "OBJSTORE", "LOGS", "TEMP", "MAIL", "AUXFILE", "NEWFILES", "DEBUG"]);
 export function validateAppNames(names: string[]): string[] {
   if (names.length < 1 || names.length > 8 || names.some((s) => !/^[A-Z0-9_-]{1,64}$/.test(s))) {
     throw new Error("Use 1..8 uppercase PRG basenames without extensions/path separators.");
   }
-  return [...new Set(names)];
+  if (names.some((s) => RESERVED.has(s))) {
+    throw new Error("App names must not be simulator container directories.");
+  }
+  return [...new Set(names)].sort();
+}
+// Only the simulator's documented per-app locations are in scope. Matching any path
+// segment would let a name like "OBJSTORE" or "OTHER" select unrelated apps' files.
+export function appFilePatterns(name: string): RegExp[] {
+  const n = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [
+    new RegExp(`^DATA/${n}\\.(DAT|IDX|IMT)$`),
+    new RegExp(`^SETTINGS/${n}\\.SET$`),
+    new RegExp(`^MEDIA/${n}\\.PRG$`),
+    new RegExp(`^DATA/MEDIA/OBJSTORE/${n}/`),
+    new RegExp(`^DATA/OBJSTORE/${n}/`),
+  ];
 }
 async function selectedFiles(root: string, names: string[]): Promise<string[]> {
+  const patterns = names.flatMap(appFilePatterns);
   const files: string[] = [];
   const visit = async (dir: string) => {
     for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
@@ -38,8 +55,8 @@ async function selectedFiles(root: string, names: string[]): Promise<string[]> {
       const filename = path.join(dir, entry.name);
       if (entry.isDirectory()) await visit(filename);
       else {
-        const relative = path.relative(root, filename);
-        if (relative.split(path.sep).some((segment) => names.some((n) => segment === n || segment.startsWith(n + ".")))) files.push(relative);
+        const relative = path.relative(root, filename).split(path.sep).join("/");
+        if (patterns.some((pattern) => pattern.test(relative))) files.push(relative);
       }
     }
   };
@@ -49,7 +66,8 @@ async function selectedFiles(root: string, names: string[]): Promise<string[]> {
 export async function snapshotAppFiles(directory: string, appNames: string[], root = storageRoot()) {
   const names = validateAppNames(appNames);
   const target = path.resolve(directory);
-  if (target.startsWith(path.resolve(root) + path.sep)) throw new Error("Snapshot must be outside simulator storage.");
+  const storageRootPath = path.resolve(root);
+  if (target === storageRootPath || target.startsWith(storageRootPath + path.sep)) throw new Error("Snapshot must be outside simulator storage.");
   await fs.mkdir(target, { recursive: false }); // Never overwrite a previous snapshot.
   const files = await selectedFiles(root, names);
   const manifest: Record<string, { sha256: string; bytes: number }> = {};
@@ -75,8 +93,10 @@ export async function restoreAppFiles(directory: string, appNames: string[], roo
   const backups = new Map<string, Buffer>();
   for (const [relative, info] of Object.entries(manifest.files) as Array<[string, { sha256: string }]>) {
     if (path.isAbsolute(relative) || relative.split(/[\\/]/).includes("..") ||
-        !relative.split(path.sep).some((segment) => names.some((n) => segment === n || segment.startsWith(n + ".")))) throw new Error("Invalid snapshot path.");
-    const data = await fs.readFile(path.join(source, "files", relative));
+        !names.flatMap(appFilePatterns).some((pattern) => pattern.test(relative))) throw new Error("Invalid snapshot path.");
+    const backupFile = path.join(source, "files", relative);
+    if ((await fs.lstat(backupFile)).isSymbolicLink()) throw new Error("Snapshot contains a symbolic link.");
+    const data = await fs.readFile(backupFile);
     if (digest(data) !== info.sha256) throw new Error("Snapshot checksum mismatch.");
     backups.set(relative, data);
   }

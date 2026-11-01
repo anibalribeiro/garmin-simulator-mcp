@@ -9,7 +9,6 @@
 ## Unit-test result contract
 
 `run_unit_tests` now returns the raw output, a structured `summary`, exit status, signal and timeout state. Success requires:
-
 - Exactly one SDK `RESULTS` table, `Ran N test(s)` count and terminal summary.
 - At least one executed test and one named table result per executed test.
 - Consistent passed/failed/error counts, no duplicate names and no conflicting error/verdict output.
@@ -18,3 +17,16 @@
 Unrecognized output is incomplete, not success. If a later SDK uses a different format, add real output fixtures and corresponding parser tests before accepting it. The parser regression samples currently follow Garmin's documented output; no Mood Check-in test output has yet been obtained because its source does not compile.
 
 An app startup timeout or zero launcher exit without a recognized startup marker is no longer reported as a confirmed launch. The existing accepted startup markers still need validation against a real successful app session. Native app stop semantics, background isolation, structured storage/time/sensor/notification controls and complication readback remain to be implemented/verified when app testing can proceed.
+
+## Startup reporting
+
+`monkeydo` consumes its `deviceStarted`/`appStarted` protocol messages internally and prints nothing, so a printed marker is rare. `run_app` now reports `launched: true` when the launcher is alive past `wait_ms` with no fatal output (`startupConfirmed: false`), or `startupConfirmed: true` when a marker is seen. Fatal launcher text (`Unable to connect to simulator`, `Encountered an app crash`, signature/PRG errors) fails the launch, and a launcher exit never counts as a launch.
+
+## Storage scope
+
+`snapshot_app_files` / `restore_app_files` only touch the simulator's documented per-app locations: `DATA/<APP>.{DAT,IDX,IMT}`, `SETTINGS/<APP>.SET`, `MEDIA/<APP>.PRG` and `[DATA/]DATA/MEDIA/OBJSTORE/<APP>/`. Container names (`DATA`, `SETTINGS`, `MEDIA`, `OBJSTORE`, …) are rejected, names are sorted for stable manifests, and restore refuses symlinks, checksums, and a directory inside simulator storage. Note that the simulator also keeps state in `GARMIN/sys.nfm`; file-level restore alone cannot reset app storage.
+
+## Misc
+
+- `set_glance_mode` uses `Settings > Glance Launch Mode` and honours omitted `enabled` as a toggle.
+- `npm run typecheck:test` type-checks the test suite separately (`tsconfig.test.json`).

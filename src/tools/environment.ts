@@ -80,22 +80,10 @@ export async function handleSetGlanceMode(args?: {
       // Ignore ini read error
     }
 
-    if (args?.enabled !== undefined && currentGlance !== undefined) {
-      if (args.enabled === currentGlance) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Glance mode is already ${args.enabled ? "enabled" : "disabled"}.`,
-            },
-          ],
-        };
-      }
-    }
-
-    const target = args?.enabled === false
-      ? ["Settings", "Glance Launch Mode", "Launch in Normal Mode"]
-      : ["Settings", "Glance Launch Mode", "Launch in Glance Mode"];
+    const targetEnabled = args?.enabled ?? (currentGlance === undefined ? true : !currentGlance);
+    const target = targetEnabled
+      ? ["Settings", "Glance Launch Mode", "Launch in Glance Mode"]
+      : ["Settings", "Glance Launch Mode", "Launch in Normal Mode"];
     const res = await triggerMenu(target);
     if (!res.ok) {
       throw new Error(

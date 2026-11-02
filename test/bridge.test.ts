@@ -272,6 +272,20 @@ async function runTests() {
   assert.ok(svg.includes("stroke-dasharray=\"6,4\""), "SVG must include dashed screen border");
   console.log("✓ Test 4 passed: SVG annotation contains all required labels and elements.");
 
+  if (process.platform === "win32") {
+    const ocrFile = path.join(os.tmpdir(), `garmin-ocr-${process.pid}.png`);
+    try {
+      await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="150"><rect width="800" height="150" fill="white"/><text x="20" y="100" font-size="72">HELLO GARMIN</text></svg>')).png().toFile(ocrFile);
+      const ocr = await runBridgeCommand(["ocr", ocrFile]);
+      if (!ocr.ok && /language pack.*unavailable/i.test(ocr.error)) console.log("Windows OCR test skipped: no OCR language pack installed.");
+      else {
+        assert.equal(ocr.ok, true, ocr.error);
+        assert.match(ocr.lines.map((line: { text: string }) => line.text).join(" "), /HELLO GARMIN/i);
+        assert.ok(ocr.lines[0].bounds.width > 0 && ocr.lines[0].bounds.width <= 1);
+      }
+    } finally { fs.rmSync(ocrFile, { force: true }); }
+  }
+
   console.log("\n========================================================");
   console.log("All Garmin Emulator Bridge & Image Tests PASSED successfully!");
   console.log("========================================================");

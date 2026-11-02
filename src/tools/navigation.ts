@@ -23,6 +23,10 @@ import type { DeviceKeyMapping, DeviceProfile, Point } from "../types.js";
  */
 export function getVirtualKeyCodeForButton(keyId: string): number | undefined {
   const lower = keyId.toLowerCase().trim();
+  if (process.platform === "win32") {
+    const keys: Record<string, number> = { enter: 13, return: 13, select: 13, start: 13, ok: 13, onselect: 13, esc: 27, escape: 27, back: 27, lap: 27, onback: 27, up: 38, prev: 38, previous: 38, previouspage: 38, down: 40, next: 40, nextpage: 40, left: 37, right: 39, menu: 77, onmenu: 77, space: 32 };
+    return keys[lower] ?? (/^\d+$/.test(lower) ? Number(lower) : undefined);
+  }
   switch (lower) {
     case "enter":
     case "return":
@@ -131,7 +135,7 @@ async function performButtonPress(options: {
   const screenPt = bezelPointToScreenPoint(
     keyMapping.center,
     windowInfo.bounds,
-    profile
+    profile, windowInfo.scale ? windowInfo.contentOffset : undefined, windowInfo.scale
   );
 
   await clickScreenPoint(screenPt.x, screenPt.y, holdDuration);
@@ -320,7 +324,7 @@ export async function handleTapScreen(args: {
     const screenPt = watchPointToScreenPoint(
       { x: watchX, y: watchY },
       windowInfo.bounds,
-      profile
+      profile, windowInfo.scale ? windowInfo.contentOffset : undefined, windowInfo.scale
     );
 
     await clickScreenPoint(screenPt.x, screenPt.y, 80);
@@ -393,12 +397,12 @@ export async function handleSwipeScreen(args: {
     const startScreen = watchPointToScreenPoint(
       startWatch,
       windowInfo.bounds,
-      profile
+      profile, windowInfo.scale ? windowInfo.contentOffset : undefined, windowInfo.scale
     );
     const endScreen = watchPointToScreenPoint(
       endWatch,
       windowInfo.bounds,
-      profile
+      profile, windowInfo.scale ? windowInfo.contentOffset : undefined, windowInfo.scale
     );
 
     await dragScreenPoints(
@@ -481,7 +485,7 @@ export async function handleHoldScreen(args: {
     const screenPt = watchPointToScreenPoint(
       { x: watchX, y: watchY },
       windowInfo.bounds,
-      profile
+      profile, windowInfo.scale ? windowInfo.contentOffset : undefined, windowInfo.scale
     );
 
     const duration = args.duration_ms ?? 1000;

@@ -13,12 +13,13 @@ public class SimulatorFixture : Form {
     }
     protected override void OnShown(EventArgs e) {
         base.OnShown(e);
-        if (mode != "editor" && mode != "hold-editor") return;
+        if (mode != "editor" && mode != "hold-editor" && mode != "modal-editor") return;
         var editor = new Form { Text = "Modify Object Store", Width = 300, Height = 160 };
         var cancel = new Button { Text = "Cancel" };
         cancel.Click += delegate { if (mode != "hold-editor") editor.Close(); };
         editor.Controls.Add(cancel);
-        editor.Show(this);
+        if (mode == "modal-editor") editor.ShowDialog(this);
+        else editor.Show(this);
     }
     [STAThread]
     public static void Main(string[] args) {

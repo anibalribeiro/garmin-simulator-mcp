@@ -9,6 +9,8 @@ A Model Context Protocol (MCP) server for automating and inspecting the Garmin C
 
 Windows support uses PowerShell and Windows UI Automation. Screenshot capture uses `PrintWindow`; a minimized simulator may not render correctly. Windows OCR requires an installed OCR language pack and does not return confidence scores. Windows UI Automation exposes different elements from macOS Accessibility. The window must be in the interactive desktop for input. Windows key codes are Windows virtual key codes.
 
+Before input, the bridge waits for foreground activation and verifies the simulator still owns focus. If Windows refuses activation or another window takes focus before input begins, the command fails without sending input; bring the simulator's main window to the foreground and retry.
+
 Enables AI coding agents (Antigravity, Claude Code, Cursor) to build, run, test, tap, swipe, press hardware buttons, stream logs, and visually inspect Garmin watchfaces, data fields, and device apps.
 
 ---

@@ -54,7 +54,9 @@ async function run() {
     const main = await start(expected, "maximized");
     const before = await bridge(["window-info"]);
     assert.equal(before.pid, main.pid);
-    await bridge(["raise"]); // Windows may refuse foreground focus; it must preserve geometry either way.
+    const focused = await bridge(["raise"]);
+    assert.equal(typeof focused.foregroundWindowId, "number", focused.error);
+    assert.equal(focused.ok, focused.foregroundWindowId === before.windowId, "success requires the actual foreground window");
     assert.deepEqual((await bridge(["window-info"])).bounds, before.bounds);
     console.log("PASS raise preserves maximized geometry");
     const duplicate = await start(expected);
@@ -70,6 +72,15 @@ async function run() {
     assert.ok(restored.bounds.x > -30000 && restored.bounds.y > -30000);
     await stop(minimized);
     console.log("PASS restores minimized windows");
+
+    const modal = await start(expected, "modal-editor");
+    for (const args of [["key", "--code", "invalid"], ["click", "--x", "invalid"], ["drag", "--x1", "invalid"]]) {
+      const blocked = await bridge(args);
+      assert.equal(blocked.ok, false);
+      assert.match(blocked.error, /not the foreground window; no input was sent/);
+    }
+    await stop(modal);
+    console.log("PASS blocks key, click and drag when the main window is not foreground");
 
     const editor = await start(expected, "editor");
     const inspected = await bridge(["ui-tree", "4"]);

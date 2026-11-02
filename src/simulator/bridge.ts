@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { locateGarminSdk } from "../config/sdk-locator.js";
 import type { Point, Rect, WindowInfoResponse } from "../types.js";
 
 const execFileAsync = promisify(execFile);
@@ -34,7 +35,8 @@ export async function runBridgeCommand(args: string[]): Promise<any> {
   if (process.platform === "win32") {
     const script = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/native/windows-bridge.ps1");
     const encoded = Buffer.from(JSON.stringify(args)).toString("base64");
-    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, encoded], { maxBuffer: 10 * 1024 * 1024 });
+    const simulatorPath = args[0] === "ocr" ? "" : fs.realpathSync(locateGarminSdk().simulatorAppPath);
+    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, encoded, simulatorPath], { maxBuffer: 10 * 1024 * 1024 });
     return JSON.parse(stdout.trim());
   }
   const binary = getBridgeBinaryPath();

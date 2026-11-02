@@ -120,17 +120,14 @@ async function performButtonPress(options: {
     // Fall back to mouse click if keycode is not mapped
   }
 
-  // Mouse method: click exact bezel hitbox center
+  // Focus can restore a minimized window, so read geometry afterwards.
+  await raiseSimulatorWindow();
   const windowInfo = await getWindowInfo();
   if (!windowInfo.running || !windowInfo.bounds) {
     throw new Error(
       "Connect IQ simulator window is not running or not visible. Launch it first using launch_simulator."
     );
   }
-
-  // Make the watch window the click target; app activation alone can be refused
-  // while another application owns focus or a modal.
-  await raiseSimulatorWindow();
 
   const screenPt = bezelPointToScreenPoint(
     keyMapping.center,
@@ -313,14 +310,13 @@ export async function handleTapScreen(args: {
       ? Math.round(args.y * profile.display.location.height)
       : Math.round(args.y);
 
+    await raiseSimulatorWindow();
     const windowInfo = await getWindowInfo();
     if (!windowInfo.running || !windowInfo.bounds) {
       throw new Error(
         "Connect IQ simulator window is not running or not visible. Launch it first using launch_simulator."
       );
     }
-    await raiseSimulatorWindow();
-
     const screenPt = watchPointToScreenPoint(
       { x: watchX, y: watchY },
       windowInfo.bounds,
@@ -386,14 +382,13 @@ export async function handleSwipeScreen(args: {
       args.direction
     );
 
+    await raiseSimulatorWindow();
     const windowInfo = await getWindowInfo();
     if (!windowInfo.running || !windowInfo.bounds) {
       throw new Error(
         "Connect IQ simulator window is not running or not visible. Launch it first using launch_simulator."
       );
     }
-    await raiseSimulatorWindow();
-
     const startScreen = watchPointToScreenPoint(
       startWatch,
       windowInfo.bounds,
@@ -474,14 +469,13 @@ export async function handleHoldScreen(args: {
       ? Math.round(args.y * profile.display.location.height)
       : Math.round(args.y);
 
+    await raiseSimulatorWindow();
     const windowInfo = await getWindowInfo();
     if (!windowInfo.running || !windowInfo.bounds) {
       throw new Error(
         "Connect IQ simulator window is not running or not visible. Launch it first using launch_simulator."
       );
     }
-    await raiseSimulatorWindow();
-
     const screenPt = watchPointToScreenPoint(
       { x: watchX, y: watchY },
       windowInfo.bounds,

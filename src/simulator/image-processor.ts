@@ -140,7 +140,7 @@ export async function processSimulatorScreenshot(params: {
   const scaleY = imgH / (windowBounds.height || 1);
 
   // 2. Compute canvas origin and 1x bezel dimensions
-  const canvasOrigin = params.windowScale ? params.contentOffset! : computeCanvasOrigin(windowBounds, profile.bezelDimensions);
+  const canvasOrigin = params.windowScale && params.contentOffset ? params.contentOffset : computeCanvasOrigin(windowBounds, profile.bezelDimensions);
   const bezelW = profile.bezelDimensions?.width ?? windowBounds.width;
   const bezelH =
     profile.bezelDimensions?.height ??
@@ -149,7 +149,7 @@ export async function processSimulatorScreenshot(params: {
   // 3. Extract bezel region in raw pixel coordinates
   let rawLeft = Math.round(canvasOrigin.x * scaleX);
   let rawTop = Math.round(canvasOrigin.y * scaleY);
-  const deviceScale = params.windowScale && params.contentOffset ? (windowBounds.width - params.contentOffset.x * 2) / bezelW : 1;
+  const deviceScale = params.windowScale && params.contentOffset ? params.windowScale : 1;
   let rawWidth = Math.round(bezelW * scaleX * deviceScale);
   let rawHeight = Math.round(bezelH * scaleY * deviceScale);
 

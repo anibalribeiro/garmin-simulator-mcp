@@ -231,6 +231,18 @@ async function runTests() {
   assert.strictEqual(bezelDecoded.height, 694);
   console.log("  ✓ view: 'bezel' output 639x694 PNG");
 
+  // A resized Windows window adds empty space; it does not scale the device.
+  for (const [width, scale] of [[650, 1], [1000, 1.25], [1000, 1.5]]) {
+    const raw = await sharp({ create: { width, height: 760, channels: 3, background: '#000000' } })
+      .composite([{ input: await sharp({ create: { width: 639, height: 694, channels: 3, background: '#ff0000' } }).png().toBuffer(), left: 8, top: 40 }])
+      .png().toBuffer();
+    const result = await processSimulatorScreenshot({ rawWindowPng: raw,
+      windowBounds: { x: 0, y: 0, width: width * scale, height: 760 * scale },
+      contentOffset: { x: 8 * scale, y: 40 * scale }, windowScale: scale, profile: mockProfile, view: 'bezel' });
+    const pixel = await sharp(Buffer.from(result.base64Png, 'base64')).extract({ left: 400, top: 300, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+    assert.deepEqual([...pixel], [255, 0, 0], `device crop must remain fixed at window width ${width}, scale ${scale}`);
+  }
+
   // Test 3c: View "annotated"
   console.log("  Testing view: 'annotated'...");
   const tmpSavePath = path.join(os.tmpdir(), `garmin-test-annotated-${Date.now()}.png`);

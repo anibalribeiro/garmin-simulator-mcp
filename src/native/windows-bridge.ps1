@@ -9,7 +9,9 @@ public static class GarminWin {
  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
- [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+ [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+ [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
+ [DllImport("shcore.dll")] public static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint x, out uint y);
  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
@@ -27,7 +29,7 @@ public static class GarminWin {
  [DllImport("user32.dll")] public static extern void keybd_event(byte v, byte s, uint f, UIntPtr e);
 }
 '@
-[void][GarminWin]::SetProcessDPIAware()
+if (![GarminWin]::SetProcessDpiAwarenessContext([IntPtr](-4))) { [void][GarminWin]::SetProcessDPIAware() }
 function output($v) { $v | ConvertTo-Json -Depth 30 -Compress }
 function opt($name, $default) { $i = [array]::IndexOf($a, $name); if ($i -ge 0 -and $i + 1 -lt $a.Count) { return $a[$i+1] }; return $default }
 function simulator { Get-Process simulator -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1 }
@@ -50,7 +52,8 @@ try {
   $p=simulator; $permissions=@{screenRecording=$true; accessibility=$true}
   if (!$p) { output @{running=$false; permissions=$permissions; error='Connect IQ simulator is not running'}; break }
   $r=New-Object GarminWin+RECT; [void][GarminWin]::GetWindowRect($p.MainWindowHandle,[ref]$r); $pt=New-Object GarminWin+POINT; [void][GarminWin]::ClientToScreen($p.MainWindowHandle,[ref]$pt)
-  output @{running=$true; pid=$p.Id; windowId=$p.MainWindowHandle.ToInt64(); bounds=@{x=$r.Left; y=$r.Top; width=($r.Right-$r.Left); height=($r.Bottom-$r.Top)}; contentOffset=@{x=($pt.X-$r.Left); y=($pt.Y-$r.Top)}; scale=([GarminWin]::GetDpiForWindow($p.MainWindowHandle)/96.0); permissions=$permissions}
+  $dpiX=[uint32]0; $dpiY=[uint32]0; if ([GarminWin]::GetDpiForMonitor([GarminWin]::MonitorFromWindow($p.MainWindowHandle,2),0,[ref]$dpiX,[ref]$dpiY) -ne 0 -or $dpiX -eq 0) { throw 'Unable to determine simulator monitor DPI' }
+  output @{running=$true; pid=$p.Id; windowId=$p.MainWindowHandle.ToInt64(); bounds=@{x=$r.Left; y=$r.Top; width=($r.Right-$r.Left); height=($r.Bottom-$r.Top)}; contentOffset=@{x=($pt.X-$r.Left); y=($pt.Y-$r.Top)}; scale=($dpiX/96.0); permissions=$permissions}
  }
  { $_ -in 'activate','raise' } { $p=win; [void][GarminWin]::ShowWindow($p.MainWindowHandle,9); $ok=[GarminWin]::SetForegroundWindow($p.MainWindowHandle); output @{ok=$ok; error=$(if (!$ok) {'Windows refused to focus the simulator'})} }
  'capture' { $p=win; if ($p.MainWindowHandle.ToInt64() -ne [long]$a[1]) { throw 'Simulator window changed' }; $r=New-Object GarminWin+RECT; [void][GarminWin]::GetWindowRect($p.MainWindowHandle,[ref]$r); $s=[double]::Parse($a[3],[System.Globalization.CultureInfo]::InvariantCulture); $b=New-Object System.Drawing.Bitmap ([int](($r.Right-$r.Left)/$s)),([int](($r.Bottom-$r.Top)/$s)); $g=[System.Drawing.Graphics]::FromImage($b); try { $dc=$g.GetHdc(); try { if (![GarminWin]::PrintWindow($p.MainWindowHandle,$dc,2)) { throw 'Unable to capture simulator window' } } finally { $g.ReleaseHdc($dc) }; $b.Save([string]$a[2],[System.Drawing.Imaging.ImageFormat]::Png) } finally { $g.Dispose(); $b.Dispose() }; output @{ok=$true} }
